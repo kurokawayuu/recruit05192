@@ -2347,3 +2347,142 @@ add_action('personal_options_update', 'save_mailmagazine_preference_field');
 add_action('edit_user_profile_update', 'save_mailmagazine_preference_field');
 
 
+/**
+ * ユーザーが加盟教室(agency)グループに所属しているかチェックする関数
+ */
+function is_agency_user() {
+    // ユーザーがログインしているか確認
+    if (!is_user_logged_in()) {
+        return false;
+    }
+    
+    // 現在のユーザー情報を取得
+    $user = wp_get_current_user();
+    
+    // WordPress標準のロールで'agency'を持っているか確認
+    return in_array('agency', (array) $user->roles);
+}
+
+/**
+ * ヘッダーナビゲーションとページアクセスのリダイレクト処理
+ */
+function agency_user_redirect() {
+    // agencyユーザーかどうかをチェック
+    if (is_agency_user()) {
+        global $wp;
+        $current_url = home_url(add_query_arg(array(), $wp->request));
+        
+        // お気に入りページや会員ページへのアクセスを/job-list/にリダイレクト
+        if (strpos($current_url, '/favorites') !== false || 
+            strpos($current_url, '/members') !== false) {
+            wp_redirect(home_url('/job-list/'));
+            exit;
+        }
+    }
+}
+add_action('template_redirect', 'agency_user_redirect');
+
+/**
+ * ヘッダーリンク修正用のJavaScript
+ */
+function modify_header_links_for_agency() {
+    if (is_agency_user()) {
+        ?>
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            // お気に入りとマイページのリンクを/job-list/に変更
+            $('.user-nav a[href*="/favorites"]').attr('href', '<?php echo home_url("/job-list/"); ?>');
+            $('.user-nav a[href*="/members"]').attr('href', '<?php echo home_url("/job-list/"); ?>');
+        });
+        </script>
+        <?php
+    }
+}
+add_action('wp_footer', 'modify_header_links_for_agency');
+
+/**
+ * 特定のユーザーロールの管理画面アクセスを制限する
+ */
+function restrict_admin_access() {
+    // 現在のユーザー情報を取得
+    $user = wp_get_current_user();
+    
+    // agencyまたはsubscriberロールを持つユーザーの管理画面アクセスを制限
+    if (
+        !empty($user->ID) && 
+        (in_array('agency', (array) $user->roles) || in_array('subscriber', (array) $user->roles))
+    ) {
+        // 現在のURLが管理画面かどうかを確認
+        $screen = get_current_screen();
+        
+        // プロフィール編集画面は許可（オプション）
+        if (is_admin() && (!isset($screen) || $screen->id !== 'profile')) {
+            // agencyユーザーはジョブリストページへ、subscriberユーザーはホームページへリダイレクト
+            if (in_array('agency', (array) $user->roles)) {
+                wp_redirect(home_url('/job-list/'));
+            } else {
+                wp_redirect(home_url());
+            }
+            exit;
+        }
+    }
+}
+add_action('admin_init', 'restrict_admin_access');
+
+/**
+ * 管理バーを非表示にする
+ */
+function remove_admin_bar_for_specific_roles() {
+    if (
+        current_user_can('agency') || 
+        current_user_can('subscriber')
+    ) {
+        show_admin_bar(false);
+    }
+}
+add_action('after_setup_theme', 'remove_admin_bar_for_specific_roles');
+
+/**
+ * ログイン時のリダイレクト処理
+ */
+function custom_login_redirect($redirect_to, $request, $user) {
+    // ユーザーオブジェクトが有効かチェック
+    if (isset($user->roles) && is_array($user->roles)) {
+        // agencyユーザーはジョブリストページへリダイレクト
+        if (in_array('agency', $user->roles)) {
+            return home_url('/job-list/');
+        }
+        // subscriberユーザーはホームページへリダイレクト
+        elseif (in_array('subscriber', $user->roles)) {
+            return home_url();
+        }
+    }
+    
+    // その他のユーザーは通常のリダイレクト先へ
+    return $redirect_to;
+}
+add_filter('login_redirect', 'custom_login_redirect', 10, 3);
+
+/**
+ * AJAX リクエストのアクセス制限を行わない（フロントエンドの機能を維持するため）
+ */
+function allow_ajax_requests_for_all_users() {
+    // 現在のリクエストがAJAXリクエストの場合は制限をバイパス
+    if (defined('DOING_AJAX') && DOING_AJAX) {
+        return;
+    }
+    
+    // メディアアップロードなどの特定のリクエストも許可
+    $allowed_actions = array(
+        'upload-attachment',
+        'async-upload',
+    );
+    
+    if (isset($_GET['action']) && in_array($_GET['action'], $allowed_actions)) {
+        return;
+    }
+    
+    // 通常の管理画面アクセス制限を適用
+    restrict_admin_access();
+}
+add_action('admin_init', 'allow_ajax_requests_for_all_users', 0);  // 優先度0で先に実行
